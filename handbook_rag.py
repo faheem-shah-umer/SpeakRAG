@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pymupdf
 import requests
+from dotenv import load_dotenv
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient, models
 
@@ -30,6 +31,8 @@ QDRANT_PATH = ROOT / "data" / "qdrant"
 MANIFEST = ROOT / "data" / "handbook_index.json"
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 EMBEDDING_CACHE = ROOT / "models" / "fastembed"
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "qwen/qwen3.8-27b:free"
 QUESTION_STOPWORDS = {
     "a", "an", "are", "can", "do", "does", "for", "how", "i", "in",
     "is", "my", "of", "the", "to", "what", "when", "with",
@@ -295,31 +298,35 @@ def make_prompt(question: str, hits: list[dict]) -> list[dict]:
 
 
 def _generate(messages: list[dict]) -> str:
-    from dotenv import load_dotenv
-    from openai import AzureOpenAI, OpenAI
-
     load_dotenv(ROOT / ".env")
-    if os.getenv("AZURE_OPENAI_ENDPOINT"):
-        needed = ("AZURE_OPENAI_API_KEY", "AZURE_OPENAI_CHAT_DEPLOYMENT", "AZURE_OPENAI_API_VERSION")
-        missing = [name for name in needed if not os.getenv(name)]
-        if missing:
-            raise ValueError(f"Set {', '.join(missing)} for Azure OpenAI.")
-        client = AzureOpenAI(
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            api_version=os.environ["AZURE_OPENAI_API_VERSION"],
-        )
-        model = os.environ["AZURE_OPENAI_CHAT_DEPLOYMENT"]
-    elif os.getenv("OPENAI_API_KEY") and os.getenv("OPENAI_MODEL"):
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        model = os.environ["OPENAI_MODEL"]
-    else:
-        raise ValueError(
-            "Generation needs Azure OpenAI settings or OPENAI_API_KEY and OPENAI_MODEL. "
-            "Use 'search' to inspect retrieved handbook passages without an API key."
-        )
-    response = client.chat.completions.create(model=model, messages=messages)
-    return response.choices[0].message.content or "[No answer returned]"
+    key = (os.getenv("OPENROUTER_API_KEY") or os.getenv("openrouter") or "").strip()
+    if not key:
+        raise ValueError("Set openrouter or OPENROUTER_API_KEY in .env to generate an answer.")
+
+    response = requests.post(
+        OPENROUTER_URL,
+        headers={"Authorization": f"Bearer {key}"},
+        json={
+            "model": OPENROUTER_MODEL,
+            "messages": messages,
+            "reasoning": {"enabled": True},
+            "max_tokens": 2048,
+        },
+        timeout=(10, 120),
+    )
+    if not response.ok:
+        if response.status_code == 401:
+            raise RuntimeError("OpenRouter rejected the API key (HTTP 401).")
+        if response.status_code == 429:
+            raise RuntimeError("OpenRouter rate limit reached (HTTP 429). Try again later.")
+        raise RuntimeError(f"OpenRouter returned HTTP {response.status_code}.")
+    try:
+        answer = response.json()["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError, ValueError) as exc:
+        raise RuntimeError("OpenRouter returned no readable assistant message.") from exc
+    if not isinstance(answer, str) or not answer.strip():
+        raise RuntimeError("OpenRouter returned an empty final answer.")
+    return answer.strip()
 
 
 def ask_handbook(question: str, top_k: int = 5) -> dict:

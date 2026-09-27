@@ -1,11 +1,10 @@
-"""Check answer-provider wiring without sending handbook text to a cloud API."""
+"""Check OpenRouter request wiring without sending real handbook text."""
 
 import os
 import unittest
-from types import SimpleNamespace
 from unittest.mock import patch
 
-from handbook_rag import _generate, make_prompt
+from handbook_rag import OPENROUTER_MODEL, OPENROUTER_URL, _generate, make_prompt
 
 
 class HandbookGenerationTests(unittest.TestCase):
@@ -14,35 +13,45 @@ class HandbookGenerationTests(unittest.TestCase):
             "title": "Sample manual", "pdf_page": 12, "text": "Connect the charger."
         }])
 
-    @patch("openai.OpenAI")
-    def test_openai_uses_configured_model_and_returns_text(self, client_type):
-        client_type.return_value.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="Connect it [1]."))]
-        )
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL": "test-model"}, clear=True):
+    @patch("handbook_rag.load_dotenv")
+    @patch("handbook_rag.requests.post")
+    def test_lowercase_env_key_sends_reasoning_request(self, post, _load_dotenv):
+        post.return_value.ok = True
+        post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "Connect it [1].", "reasoning_details": []}}]
+        }
+        with patch.dict(os.environ, {"openrouter": "test-key"}, clear=True):
             answer = _generate(self.messages)
         self.assertEqual(answer, "Connect it [1].")
-        client_type.return_value.chat.completions.create.assert_called_once_with(
-            model="test-model", messages=self.messages
+        post.assert_called_once_with(
+            OPENROUTER_URL,
+            headers={"Authorization": "Bearer test-key"},
+            json={
+                "model": OPENROUTER_MODEL,
+                "messages": self.messages,
+                "reasoning": {"enabled": True},
+                "max_tokens": 2048,
+            },
+            timeout=(10, 120),
         )
 
-    @patch("openai.AzureOpenAI")
-    def test_azure_uses_deployment(self, client_type):
-        client_type.return_value.chat.completions.create.return_value = SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="Use page 12 [1]."))]
-        )
-        settings = {
-            "AZURE_OPENAI_ENDPOINT": "https://example.openai.azure.com/",
-            "AZURE_OPENAI_API_KEY": "test-key",
-            "AZURE_OPENAI_API_VERSION": "test-version",
-            "AZURE_OPENAI_CHAT_DEPLOYMENT": "test-deployment",
+    @patch("handbook_rag.load_dotenv")
+    @patch("handbook_rag.requests.post")
+    def test_canonical_env_key_is_accepted(self, post, _load_dotenv):
+        post.return_value.ok = True
+        post.return_value.json.return_value = {
+            "choices": [{"message": {"content": "Use page 12 [1]."}}]
         }
-        with patch.dict(os.environ, settings, clear=True):
-            answer = _generate(self.messages)
-        self.assertEqual(answer, "Use page 12 [1].")
-        client_type.return_value.chat.completions.create.assert_called_once_with(
-            model="test-deployment", messages=self.messages
-        )
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}, clear=True):
+            self.assertEqual(_generate(self.messages), "Use page 12 [1].")
+
+    @patch("handbook_rag.load_dotenv")
+    @patch("handbook_rag.requests.post")
+    def test_missing_key_does_not_call_api(self, post, _load_dotenv):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "OPENROUTER_API_KEY"):
+                _generate(self.messages)
+        post.assert_not_called()
 
 
 if __name__ == "__main__":

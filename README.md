@@ -67,11 +67,11 @@ Its SHA-256 starts `846a91864356a2b7`. It describes equipment for several
 vehicle configurations and the India market; answers should not be treated as
 instructions for a different vehicle or region.
 
-In the **Handbook** tab, select **Prepare handbook**. The first run downloads
+In the **Handbook** tab, select **Prepare sample handbook**. The first run downloads
 the PDF, downloads a small local embedding model, and builds the Qdrant index.
 Then type a question or select **Use transcript** after ASR. **Search pages**
-shows the retrieved text with PDF page numbers. **Generate answer** calls an
-Azure OpenAI or OpenAI chat endpoint if configured; its answer should cite the
+shows the retrieved text with PDF page numbers. **Generate answer** calls
+OpenRouter's `qwen/qwen3.8-27b:free` model if configured; its answer should cite the
 retrieved passages as `[1]`, `[2]`, and so on.
 
 The same stages are available from PowerShell:
@@ -94,13 +94,22 @@ Close the desktop app before running CLI indexing or search: embedded Qdrant
 allows only one process to open its storage at a time. It needs no Docker
 service. A separate Qdrant server would be the next step for concurrent users.
 
-For generated answers, copy `.env.example` to `.env` and fill in either your
-Azure OpenAI endpoint, key, chat deployment and API version, or your OpenAI key
-and model. Then run:
+For generated answers, put your OpenRouter key in the Git-ignored `.env` file:
+
+```dotenv
+openrouter=your_openrouter_api_key
+```
+
+`OPENROUTER_API_KEY` is also accepted. The `.env.example` file shows the format
+without containing a real key. Then run:
 
 ```powershell
 .\.venv\Scripts\python.exe handbook_rag.py ask "What should I do if charging stops abruptly?"
 ```
+
+The selected free model has [OpenRouter rate limits](https://openrouter.ai/pricing/).
+If generation reports HTTP 429, wait for the allowance to reset; **Search pages**
+continues to work locally.
 
 The PDF is extracted one page at a time. Each page is split into roughly
 1,200-character chunks with 150-character overlap. FastEmbed's local
@@ -108,9 +117,10 @@ The PDF is extracted one page at a time. Each page is split into roughly
 Qdrant stores the vectors, text, source URL, and PDF page number. At query time,
 SpeakRAG embeds the question, retrieves cosine-similar chunks, keeps distinct
 pages, adds neighbouring text from each page, and applies a small keyword
-rerank. The selected passages are sent to the chat model with instructions to
-answer only from them and cite them. Retrieved passages leave your computer
-only when you choose **Generate answer** with a cloud endpoint configured.
+rerank. The selected passages are sent to OpenRouter with instructions to answer
+only from them and cite them. The request enables model reasoning; only the
+final answer is displayed. Retrieved passages and your question leave your
+computer only when you choose **Generate answer**.
 
 The PDF, model weights, local Qdrant database, and `.env` are Git-ignored. The
 public repository includes the source link and the code, but not Hyundai's
@@ -193,6 +203,6 @@ change when headsets or other audio hardware are connected.
 - [x] Desktop interface for the audio lab
 - [x] Local automatic speech recognition (ASR) for WAV files
 - [x] PDF indexing and local Qdrant retrieval with page references
-- [x] Grounded RAG generation using a configured Azure OpenAI or OpenAI endpoint
+- [x] Grounded RAG generation using the configured OpenRouter model
 - [ ] Text-to-speech (TTS)
 - [ ] Vehicle application and evaluation
