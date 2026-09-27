@@ -190,18 +190,18 @@ def save_plot(path: Path, output: Path) -> None:
         np.abs(librosa.stft(samples)), ref=np.max
     )
 
-    figure = Figure(figsize=(12, 4.4), layout="constrained", facecolor="#0e191f")
+    figure = Figure(figsize=(12, 4.4), layout="constrained", facecolor="#10191f")
     FigureCanvasAgg(figure)
     axes = figure.subplots(2, 1)
     for axis in axes:
-        axis.set_facecolor("#0e191f")
-        axis.tick_params(colors="#a8c1b9", labelsize=11)
-        axis.title.set_color("#e9f0ee")
-        axis.xaxis.label.set_color("#a8c1b9")
-        axis.yaxis.label.set_color("#a8c1b9")
+        axis.set_facecolor("#10191f")
+        axis.tick_params(colors="#a9b9b1", labelsize=11)
+        axis.title.set_color("#f6f2e9")
+        axis.xaxis.label.set_color("#a9b9b1")
+        axis.yaxis.label.set_color("#a9b9b1")
         for spine in axis.spines.values():
-            spine.set_color("#36515a")
-    axes[0].plot(times, samples, color="#7ce5b5", linewidth=0.7)
+            spine.set_color("#3a5158")
+    axes[0].plot(times, samples, color="#d6eab9", linewidth=0.7)
     axes[0].set(xlabel="Time (s)", ylabel="Amplitude", title="Waveform", ylim=(-1.05, 1.05))
     axes[0].grid(color="#315058", alpha=0.55)
     image = axes[1].imshow(
@@ -215,8 +215,8 @@ def save_plot(path: Path, output: Path) -> None:
     )
     axes[1].set(xlabel="Time (s)", ylabel="Frequency (Hz)", title="Spectrogram")
     colorbar = figure.colorbar(image, ax=axes[1])
-    colorbar.ax.tick_params(colors="#a8c1b9", labelsize=10)
-    colorbar.set_label("dB relative to peak", color="#a8c1b9")
+    colorbar.ax.tick_params(colors="#a9b9b1", labelsize=10)
+    colorbar.set_label("dB relative to peak", color="#a9b9b1")
     output.parent.mkdir(parents=True, exist_ok=True)
     figure.savefig(output, dpi=150, facecolor=figure.get_facecolor())
 

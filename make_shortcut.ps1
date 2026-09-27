@@ -11,6 +11,6 @@ $shortcut.TargetPath = $python
 $shortcut.Arguments = '"' + (Join-Path $project 'desktop_app.py') + '"'
 $shortcut.WorkingDirectory = $project
 $shortcut.IconLocation = Join-Path $project 'docs\SpeakRAG.ico'
-$shortcut.Description = 'Launch the SpeakRAG speech lab'
+$shortcut.Description = 'Launch the SpeakRAG Voice Studio'
 $shortcut.Save()
 Write-Host "Created $shortcutPath"
