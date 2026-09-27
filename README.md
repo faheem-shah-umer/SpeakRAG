@@ -59,6 +59,64 @@ work stays in `voice_loop.py`, so the interface does not duplicate audio logic.
 `asr.py` loads faster-whisper and consumes its segment generator to produce the
 transcript. The window displays that result; it does not run the model itself.
 
+## Build the automotive handbook RAG index
+
+The sample source is the [official Hyundai India IONIQ 5 Owner's Manual](https://www.hyundai.com/content/dam/hyundai/in/en/data/connect-to-service/owners-manual/2025/ioniq5Oct2022-present.pdf).
+The PDF used here has 568 pages and was downloaded on 27 September 2026.
+Its SHA-256 starts `846a91864356a2b7`. It describes equipment for several
+vehicle configurations and the India market; answers should not be treated as
+instructions for a different vehicle or region.
+
+In the **Handbook** tab, select **Prepare handbook**. The first run downloads
+the PDF, downloads a small local embedding model, and builds the Qdrant index.
+Then type a question or select **Use transcript** after ASR. **Search pages**
+shows the retrieved text with PDF page numbers. **Generate answer** calls an
+Azure OpenAI or OpenAI chat endpoint if configured; its answer should cite the
+retrieved passages as `[1]`, `[2]`, and so on.
+
+The same stages are available from PowerShell:
+
+```powershell
+.\.venv\Scripts\python.exe handbook_rag.py download
+.\.venv\Scripts\python.exe handbook_rag.py index
+.\.venv\Scripts\python.exe handbook_rag.py search "What should I do if charging stops abruptly?"
+.\.venv\Scripts\python.exe handbook_rag.py status
+```
+
+You can replace the sample with another text-based PDF:
+
+```powershell
+.\.venv\Scripts\python.exe handbook_rag.py index --pdf "C:\path\to\manual.pdf" --title "My vehicle manual" --url "https://source.example/manual.pdf" --rebuild
+```
+
+`--rebuild` deliberately replaces this project's single handbook collection.
+Close the desktop app before running CLI indexing or search: embedded Qdrant
+allows only one process to open its storage at a time. It needs no Docker
+service. A separate Qdrant server would be the next step for concurrent users.
+
+For generated answers, copy `.env.example` to `.env` and fill in either your
+Azure OpenAI endpoint, key, chat deployment and API version, or your OpenAI key
+and model. Then run:
+
+```powershell
+.\.venv\Scripts\python.exe handbook_rag.py ask "What should I do if charging stops abruptly?"
+```
+
+The PDF is extracted one page at a time. Each page is split into roughly
+1,200-character chunks with 150-character overlap. FastEmbed's local
+`all-MiniLM-L6-v2` model turns those chunks into 384-dimensional vectors;
+Qdrant stores the vectors, text, source URL, and PDF page number. At query time,
+SpeakRAG embeds the question, retrieves cosine-similar chunks, keeps distinct
+pages, adds neighbouring text from each page, and applies a small keyword
+rerank. The selected passages are sent to the chat model with instructions to
+answer only from them and cite them. Retrieved passages leave your computer
+only when you choose **Generate answer** with a cloud endpoint configured.
+
+The PDF, model weights, local Qdrant database, and `.env` are Git-ignored. The
+public repository includes the source link and the code, but not Hyundai's
+manual or copied text. PDF extraction can garble some styled headings, so
+inspect the cited page when an answer matters.
+
 ## Transcribe from the command line
 
 To try ASR before recording works, download the public sample into the ignored
@@ -134,6 +192,7 @@ change when headsets or other audio hardware are connected.
 - [x] WAV inspection and plots with librosa
 - [x] Desktop interface for the audio lab
 - [x] Local automatic speech recognition (ASR) for WAV files
-- [ ] Retrieval-augmented generation (RAG)
+- [x] PDF indexing and local Qdrant retrieval with page references
+- [x] Grounded RAG generation using a configured Azure OpenAI or OpenAI endpoint
 - [ ] Text-to-speech (TTS)
 - [ ] Vehicle application and evaluation

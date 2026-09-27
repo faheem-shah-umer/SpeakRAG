@@ -6,6 +6,8 @@ __pycache__/
 .ruff_cache/
 .mplconfig/
 models/
+handbooks/
+data/
 /*.lnk
 
 # Local configuration and credentials for later milestones

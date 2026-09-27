@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 from datetime import datetime
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QProgressBar,
@@ -35,7 +37,8 @@ from voice_loop import analyse_audio, get_audio_devices, play_audio, record_audi
 
 ROOT = Path(__file__).resolve().parent
 PREVIEW = ROOT / "plots" / "current.png"
-APP_ICON = ROOT / "docs" / "SpeakRAG.png"
+APP_ICON = ROOT / "docs" / "SpeakRAG.ico"
+HANDBOOK_INDEX = ROOT / "data" / "handbook_index.json"
 
 
 class AudioJob(QThread):
@@ -56,6 +59,26 @@ class AudioJob(QThread):
 
     def run(self):
         try:
+            if self.task == "index":
+                from handbook_rag import download_handbook, index_handbook
+
+                self.stage.emit("Preparing the official handbook and building its Qdrant index…")
+                manifest = index_handbook(download_handbook())
+                self.result.emit({"task": "index", "manifest": manifest})
+                return
+            if self.task in ("search", "ask"):
+                from handbook_rag import ask_handbook, search_handbook
+
+                question = self.options["question"]
+                self.stage.emit("Searching the handbook…")
+                if self.task == "ask":
+                    result = ask_handbook(question)
+                    self.result.emit({"task": "ask", **result})
+                else:
+                    self.result.emit({
+                        "task": "search", "hits": search_handbook(question), "answer": None
+                    })
+                return
             if self.task == "record":
                 record_audio(
                     self.path,
@@ -161,6 +184,7 @@ class SpeakRAGWindow(QMainWindow):
         root.addLayout(body, stretch=1)
 
         controls = QFrame()
+        self.controls = controls
         controls.setObjectName("panel")
         controls.setFixedWidth(306)
         left = QVBoxLayout(controls)
@@ -242,8 +266,10 @@ class SpeakRAGWindow(QMainWindow):
         topline = QHBoxLayout()
         toptext = QVBoxLayout()
         overline = QLabel("YOUR SIGNAL, EXPLAINED")
+        self.content_overline = overline
         overline.setObjectName("eyebrow")
         heading = QLabel("Listen. Inspect. Transcribe.")
+        self.content_heading = heading
         heading.setObjectName("heading")
         toptext.addWidget(overline)
         toptext.addWidget(heading)
@@ -255,7 +281,9 @@ class SpeakRAGWindow(QMainWindow):
         topline.addWidget(self.export_button, alignment=Qt.AlignmentFlag.AlignBottom)
         content.addLayout(topline)
 
-        metric_grid = QGridLayout()
+        self.metric_widget = QWidget()
+        metric_grid = QGridLayout(self.metric_widget)
+        metric_grid.setContentsMargins(0, 0, 0, 0)
         metric_grid.setSpacing(10)
         self.metrics = {}
         for index, label in enumerate(
@@ -264,7 +292,7 @@ class SpeakRAGWindow(QMainWindow):
             card, value = metric_card(label)
             self.metrics[label] = value
             metric_grid.addWidget(card, index // 3, index % 3)
-        content.addLayout(metric_grid)
+        content.addWidget(self.metric_widget)
 
         self.tabs = QTabWidget()
         chart = QFrame()
@@ -322,6 +350,54 @@ class SpeakRAGWindow(QMainWindow):
         self.segment_text.setPlaceholderText("No segments yet.")
         transcript_layout.addWidget(self.segment_text)
         self.tabs.addTab(transcript_panel, "Transcript")
+
+        handbook_panel = QFrame()
+        handbook_panel.setObjectName("panel")
+        handbook_layout = QVBoxLayout(handbook_panel)
+        handbook_layout.setContentsMargins(21, 20, 21, 20)
+        handbook_layout.setSpacing(12)
+        handbook_title = QLabel("AUTOMOTIVE HANDBOOK  /  QDRANT")
+        handbook_title.setObjectName("eyebrow")
+        handbook_layout.addWidget(handbook_title)
+        self.handbook_meta = QLabel(
+            "Index the official Hyundai IONIQ 5 manual once to search it locally."
+        )
+        self.handbook_meta.setObjectName("muted")
+        self.handbook_meta.setWordWrap(True)
+        handbook_layout.addWidget(self.handbook_meta)
+        self.prepare_handbook_button = QPushButton("Prepare sample handbook")
+        self.prepare_handbook_button.clicked.connect(self._prepare_handbook)
+        handbook_layout.addWidget(self.prepare_handbook_button)
+        self.handbook_query = QLineEdit()
+        self.handbook_query.setPlaceholderText("Ask a question about the handbook…")
+        handbook_layout.addWidget(self.handbook_query)
+        handbook_actions = QHBoxLayout()
+        self.use_transcript_button = QPushButton("Use transcript")
+        self.use_transcript_button.clicked.connect(self._use_transcript)
+        handbook_actions.addWidget(self.use_transcript_button)
+        self.search_handbook_button = QPushButton("Search pages")
+        self.search_handbook_button.clicked.connect(lambda: self._handbook_job("search"))
+        handbook_actions.addWidget(self.search_handbook_button)
+        self.ask_handbook_button = QPushButton("Generate answer")
+        self.ask_handbook_button.setObjectName("primaryButton")
+        self.ask_handbook_button.clicked.connect(lambda: self._handbook_job("ask"))
+        handbook_actions.addWidget(self.ask_handbook_button)
+        handbook_layout.addLayout(handbook_actions)
+        self.handbook_answer = QPlainTextEdit()
+        self.handbook_answer.setReadOnly(True)
+        self.handbook_answer.setPlaceholderText("The grounded answer will appear here.")
+        self.handbook_answer.setMaximumHeight(130)
+        handbook_layout.addWidget(self.handbook_answer)
+        sources_label = QLabel("RETRIEVED PASSAGES  /  PDF PAGE REFERENCES")
+        sources_label.setObjectName("eyebrow")
+        handbook_layout.addWidget(sources_label)
+        self.handbook_sources = QPlainTextEdit()
+        self.handbook_sources.setReadOnly(True)
+        self.handbook_sources.setPlaceholderText("Search results will appear here.")
+        handbook_layout.addWidget(self.handbook_sources, stretch=1)
+        self.tabs.addTab(handbook_panel, "Handbook")
+        self.tabs.currentChanged.connect(self._tab_changed)
+        self._refresh_handbook_state()
         content.addWidget(self.tabs, stretch=1)
 
         footer = QFrame()
@@ -422,6 +498,46 @@ class SpeakRAGWindow(QMainWindow):
             QApplication.clipboard().setText(self.current_transcript["text"])
             self._status("Transcript copied to the clipboard.")
 
+    def _refresh_handbook_state(self):
+        ready = HANDBOOK_INDEX.exists()
+        try:
+            title = json.loads(HANDBOOK_INDEX.read_text(encoding="utf-8"))["title"] if ready else None
+        except (OSError, ValueError, KeyError):
+            ready = False
+            title = None
+        self.search_handbook_button.setEnabled(ready)
+        self.ask_handbook_button.setEnabled(ready)
+        self.handbook_meta.setText(
+            f"{title} is indexed. Ask a question or use a transcript."
+            if ready else "Index the official Hyundai IONIQ 5 manual once to search it locally."
+        )
+
+    def _tab_changed(self, index: int):
+        handbook = index == 2
+        self.controls.setVisible(not handbook)
+        self.metric_widget.setVisible(not handbook)
+        self.export_button.setVisible(not handbook)
+        self.content_overline.setText("AUTOMOTIVE KNOWLEDGE, GROUNDED" if handbook else "YOUR SIGNAL, EXPLAINED")
+        self.content_heading.setText("Ask. Retrieve. Verify." if handbook else "Listen. Inspect. Transcribe.")
+
+    def _prepare_handbook(self):
+        self._status("Preparing the handbook. The first run downloads the PDF and embedding model…")
+        self._start_job("index", ROOT)
+
+    def _use_transcript(self):
+        if self.current_transcript and self.current_transcript["text"]:
+            self.handbook_query.setText(self.current_transcript["text"])
+            self.tabs.setCurrentIndex(2)
+        else:
+            self._status("Transcribe a WAV file first, or type a handbook question.")
+
+    def _handbook_job(self, task: str):
+        question = self.handbook_query.text().strip()
+        if not question:
+            self._status("Type a handbook question first.")
+            return
+        self._start_job(task, ROOT, {"question": question})
+
     def _stop(self):
         if self._worker:
             self._worker.request_stop()
@@ -433,6 +549,26 @@ class SpeakRAGWindow(QMainWindow):
         self.stop_button.setEnabled(False)
 
     def _job_result(self, payload: dict):
+        if payload["task"] == "index":
+            self._refresh_handbook_state()
+            self._status(
+                f"Indexed {payload['manifest']['chunks']} passages from "
+                f"{payload['manifest']['pdf_pages']} PDF pages."
+            )
+            return
+        if payload["task"] in ("search", "ask"):
+            self.handbook_answer.setPlainText(payload["answer"] or "Search results are shown below.")
+            self.handbook_sources.setPlainText("\n\n".join(
+                f"[{number}] {hit['title']} · PDF page {hit['pdf_page']} "
+                f"· relevance {hit['score']:.3f}\n{hit['text']}\n{hit['source_url']}"
+                for number, hit in enumerate(payload["hits"], start=1)
+            ))
+            self.tabs.setCurrentIndex(2)
+            self._status(
+                "Answer ready with source pages." if payload["task"] == "ask"
+                else "Relevant handbook passages are ready."
+            )
+            return
         if payload["task"] == "play":
             self._status("Playback finished.")
             return
@@ -470,7 +606,7 @@ class SpeakRAGWindow(QMainWindow):
     def _job_error(self, message: str):
         if "-9999" in message or "-9996" in message:
             message += ". Try another microphone in the list and check Windows microphone access."
-        self._status(f"Audio error: {message}", error=True)
+        self._status(f"Error: {message}", error=True)
 
     def _job_finished(self):
         self._worker = None
@@ -488,11 +624,16 @@ class SpeakRAGWindow(QMainWindow):
         self.copy_button.setEnabled(
             not busy and self.current_transcript is not None and bool(self.current_transcript["text"])
         )
+        self.prepare_handbook_button.setEnabled(not busy)
+        self.use_transcript_button.setEnabled(not busy)
+        self.search_handbook_button.setEnabled(not busy and HANDBOOK_INDEX.exists())
+        self.ask_handbook_button.setEnabled(not busy and HANDBOOK_INDEX.exists())
         self.stop_button.setEnabled(
             busy and self._worker is not None and self._worker.task in ("record", "play")
         )
         for widget in (
-            self.input_device, self.output_device, self.rate, self.channels, self.seconds, self.asr_model
+            self.input_device, self.output_device, self.rate, self.channels, self.seconds,
+            self.asr_model, self.handbook_query,
         ):
             widget.setEnabled(not busy)
 
@@ -581,6 +722,8 @@ QLabel#fileLabel { color: #729e9d; }
 QComboBox, QDoubleSpinBox { background: #0c171d; color: #e9f0ee; border: 1px solid #355058;
                            border-radius: 8px; padding: 9px; min-height: 19px; }
 QComboBox QAbstractItemView { background: #15242b; color: #e9f0ee; selection-background-color: #266b54; }
+QLineEdit { background: #0c171d; color: #e9f0ee; border: 1px solid #355058;
+            border-radius: 8px; padding: 10px; }
 QPushButton { background: #21343b; color: #e6f1ec; border: 1px solid #38565e;
               border-radius: 9px; padding: 10px; font-weight: 600; }
 QPushButton:hover { background: #2b4850; }
