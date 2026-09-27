@@ -1,0 +1,17 @@
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local configuration and credentials for later milestones
+.env
+.env.*
+!.env.example
+
+# Microphone recordings and analysis images may contain personal data
+recordings/*
+!recordings/.gitkeep
+plots/*
+!plots/.gitkeep
