@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import wave
 from pathlib import Path
+from typing import Callable
 
 import librosa
 import numpy as np
@@ -26,18 +28,25 @@ def _pyaudio():
 
 
 def list_devices() -> None:
+    for device in get_audio_devices():
+        print(
+            f"{device['index']:>3}  {device['name']}  "
+            f"input={device['maxInputChannels']}  "
+            f"output={device['maxOutputChannels']}  "
+            f"default_rate={device['defaultSampleRate']:.0f} Hz"
+        )
+
+
+def get_audio_devices() -> list[dict]:
     pyaudio = _pyaudio()
     audio = pyaudio.PyAudio()
     try:
+        devices = []
         for index in range(audio.get_device_count()):
             device = audio.get_device_info_by_index(index)
             if device["maxInputChannels"] or device["maxOutputChannels"]:
-                print(
-                    f"{index:>3}  {device['name']}  "
-                    f"input={device['maxInputChannels']}  "
-                    f"output={device['maxOutputChannels']}  "
-                    f"default_rate={device['defaultSampleRate']:.0f} Hz"
-                )
+                devices.append(device)
+        return devices
     finally:
         audio.terminate()
 
@@ -48,6 +57,8 @@ def record_audio(
     sample_rate: int | None = None,
     channels: int = 1,
     input_device: int | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+    on_progress: Callable[[float], None] | None = None,
 ) -> Path:
     if seconds <= 0 or (sample_rate is not None and sample_rate <= 0) or channels <= 0:
         raise ValueError("Duration, sample rate, and channel count must be positive.")
@@ -71,17 +82,22 @@ def record_audio(
             input_device_index=input_device,
             frames_per_buffer=CHUNK_FRAMES,
         )
-        remaining = round(seconds * recording_rate)
-        while remaining:
+        total = round(seconds * recording_rate)
+        remaining = total
+        while remaining and not (stop_requested and stop_requested()):
             count = min(CHUNK_FRAMES, remaining)
             frames.append(stream.read(count))
             remaining -= count
+            if on_progress:
+                on_progress((total - remaining) / total)
     finally:
         if stream is not None:
             stream.stop_stream()
             stream.close()
         audio.terminate()
 
+    if not frames:
+        raise RuntimeError("Recording stopped before any audio was captured.")
     output.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(output), "wb") as wav:
         wav.setnchannels(channels)
@@ -91,7 +107,11 @@ def record_audio(
     return output
 
 
-def play_audio(path: Path, output_device: int | None = None) -> None:
+def play_audio(
+    path: Path,
+    output_device: int | None = None,
+    stop_requested: Callable[[], bool] | None = None,
+) -> None:
     pyaudio = _pyaudio()
     audio = pyaudio.PyAudio()
     stream = None
@@ -108,6 +128,8 @@ def play_audio(path: Path, output_device: int | None = None) -> None:
                 frames_per_buffer=CHUNK_FRAMES,
             )
             while chunk := wav.readframes(CHUNK_FRAMES):
+                if stop_requested and stop_requested():
+                    break
                 stream.write(chunk)
     finally:
         if stream is not None:
@@ -156,7 +178,9 @@ def analyse_audio(path: Path) -> dict[str, float | int | None]:
 
 
 def save_plot(path: Path, output: Path) -> None:
-    import matplotlib.pyplot as plt
+    os.environ.setdefault("MPLCONFIGDIR", str(Path(__file__).resolve().parent / ".mplconfig"))
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
 
     samples, sample_rate = librosa.load(path, sr=None, mono=True)
     if samples.size == 0:
@@ -166,23 +190,35 @@ def save_plot(path: Path, output: Path) -> None:
         np.abs(librosa.stft(samples)), ref=np.max
     )
 
-    figure, axes = plt.subplots(2, 1, figsize=(11, 6), layout="constrained")
-    axes[0].plot(times, samples, linewidth=0.5)
+    figure = Figure(figsize=(12, 4.4), layout="constrained", facecolor="#0e191f")
+    FigureCanvasAgg(figure)
+    axes = figure.subplots(2, 1)
+    for axis in axes:
+        axis.set_facecolor("#0e191f")
+        axis.tick_params(colors="#a8c1b9", labelsize=11)
+        axis.title.set_color("#e9f0ee")
+        axis.xaxis.label.set_color("#a8c1b9")
+        axis.yaxis.label.set_color("#a8c1b9")
+        for spine in axis.spines.values():
+            spine.set_color("#36515a")
+    axes[0].plot(times, samples, color="#7ce5b5", linewidth=0.7)
     axes[0].set(xlabel="Time (s)", ylabel="Amplitude", title="Waveform", ylim=(-1.05, 1.05))
-    axes[0].grid(alpha=0.25)
+    axes[0].grid(color="#315058", alpha=0.55)
     image = axes[1].imshow(
         spectrum,
         origin="lower",
         aspect="auto",
         extent=(0, samples.size / sample_rate, 0, sample_rate / 2),
+        cmap="magma",
         vmin=-80,
         vmax=0,
     )
     axes[1].set(xlabel="Time (s)", ylabel="Frequency (Hz)", title="Spectrogram")
-    figure.colorbar(image, ax=axes[1], label="dB relative to peak")
+    colorbar = figure.colorbar(image, ax=axes[1])
+    colorbar.ax.tick_params(colors="#a8c1b9", labelsize=10)
+    colorbar.set_label("dB relative to peak", color="#a8c1b9")
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure.savefig(output, dpi=150)
-    plt.close(figure)
+    figure.savefig(output, dpi=150, facecolor=figure.get_facecolor())
 
 
 def main(argv: list[str] | None = None) -> int:

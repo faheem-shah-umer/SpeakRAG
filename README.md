@@ -5,6 +5,8 @@ local audio loop: record microphone audio, inspect the WAV file, and play it
 back. Speech recognition, retrieval, and speech synthesis will be added in
 later milestones. The first application will be a simulated vehicle assistant.
 
+![SpeakRAG Audio Lab showing a synthetic tone](docs/audio-lab.png)
+
 ## Set up on Windows
 
 Use Python 3.11 and a working microphone and speaker:
@@ -13,6 +15,27 @@ Use Python 3.11 and a working microphone and speaker:
 py -3.11 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
+
+## Use the desktop interface
+
+```powershell
+.\.venv\Scripts\python.exe desktop_app.py
+```
+
+Choose a microphone, speaker, and recording length, then select **Record
+audio**. The window shows the waveform, spectrogram, and six key measurements
+when analysis finishes. **Stop** ends recording or playback after the current
+audio chunk. **Open WAV file** lets you inspect a recording without using the
+microphone. **Export plot** saves a copy of the current chart.
+
+The interface uses PySide6 (Qt for Python). Recording, playback, and plotting
+run in a background thread so the window remains responsive. The desktop app
+and the command line use the same functions in `voice_loop.py`.
+
+For learning: `SpeakRAGWindow` builds the controls and displays results;
+`AudioJob` runs a requested operation on a `QThread`. The job sends progress,
+result, or error signals back to the window. All microphone, WAV, and librosa
+work stays in `voice_loop.py`, so the interface does not duplicate audio logic.
 
 ## Run the audio loop
 
@@ -62,6 +85,7 @@ change when headsets or other audio hardware are connected.
 
 - [x] Local microphone capture and speaker playback with PyAudio
 - [x] WAV inspection and plots with librosa
+- [x] Desktop interface for the audio lab
 - [ ] Automatic speech recognition (ASR)
 - [ ] Retrieval-augmented generation (RAG)
 - [ ] Text-to-speech (TTS)

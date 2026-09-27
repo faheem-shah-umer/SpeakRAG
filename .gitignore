@@ -4,6 +4,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .ruff_cache/
+.mplconfig/
 
 # Local configuration and credentials for later milestones
 .env

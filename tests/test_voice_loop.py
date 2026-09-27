@@ -2,10 +2,11 @@ import tempfile
 import unittest
 import wave
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
-from voice_loop import analyse_audio, save_plot
+from voice_loop import analyse_audio, record_audio, save_plot
 
 
 class AudioAnalysisTests(unittest.TestCase):
@@ -52,6 +53,46 @@ class AudioAnalysisTests(unittest.TestCase):
         output = self.directory / "plot.png"
         save_plot(tone, output)
         self.assertGreater(output.stat().st_size, 0)
+
+    def test_recording_stop_writes_only_captured_frames(self):
+        class InputStream:
+            reads = 0
+
+            def read(self, count):
+                self.reads += 1
+                return bytes(count * 2)
+
+            def stop_stream(self):
+                pass
+
+            def close(self):
+                pass
+
+        class Audio:
+            def get_default_input_device_info(self):
+                return {"defaultSampleRate": 16_000}
+
+            def open(self, **kwargs):
+                return stream
+
+            def terminate(self):
+                pass
+
+        class FakePyAudio:
+            paInt16 = 8
+
+            @staticmethod
+            def PyAudio():
+                return Audio()
+
+        stream = InputStream()
+        output = self.directory / "stopped.wav"
+        with patch("voice_loop._pyaudio", return_value=FakePyAudio):
+            record_audio(output, 2, stop_requested=lambda: stream.reads > 0)
+
+        with wave.open(str(output), "rb") as wav:
+            self.assertEqual(wav.getnframes(), 1024)
+        self.assertEqual(stream.reads, 1)
 
 
 if __name__ == "__main__":
