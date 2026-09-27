@@ -1,15 +1,18 @@
 # SpeakRAG
 
-SpeakRAG is a reusable ASR–RAG–TTS assistant project. The first milestone is a
-local audio loop: record microphone audio, inspect the WAV file, and play it
-back. Speech recognition, retrieval, and speech synthesis will be added in
-later milestones. The first application will be a simulated vehicle assistant.
+SpeakRAG is a reusable ASR–RAG–TTS assistant project. It currently records,
+inspects, plays, and transcribes WAV audio. Retrieval and speech synthesis will
+be added in later milestones. The first application will be a simulated vehicle
+assistant.
 
-![SpeakRAG Audio Lab showing a synthetic tone](docs/audio-lab.png)
+![SpeakRAG Speech Lab signal view](docs/audio-lab.png)
+
+The screenshots use the public [whisper.cpp JFK sample](https://github.com/ggml-org/whisper.cpp/tree/master/samples); the sample audio is not included in this repository.
 
 ## Set up on Windows
 
-Use Python 3.11 and a working microphone and speaker:
+Use Python 3.11. A microphone and speaker are needed for recording and playback;
+transcription also works with an existing WAV file.
 
 ```powershell
 py -3.11 -m venv .venv
@@ -23,10 +26,19 @@ py -3.11 -m venv .venv
 ```
 
 Choose a microphone, speaker, and recording length, then select **Record
-audio**. The window shows the waveform, spectrogram, and six key measurements
-when analysis finishes. **Stop** ends recording or playback after the current
-audio chunk. **Open WAV file** lets you inspect a recording without using the
+audio**. The **Signal** tab shows the waveform, spectrogram, and six key
+measurements. **Stop** ends recording or playback after the current audio
+chunk. **Open WAV file** lets you inspect a recording without using the
 microphone. **Export plot** saves a copy of the current chart.
+
+In the **Transcript** tab, choose an ASR model and select **Transcribe WAV**.
+The transcript is copyable and its timestamped segments appear underneath. The
+default `base.en` model is for English; `base` detects among multiple languages.
+The first use of each model downloads its weights into the Git-ignored
+`models/` folder. Later runs use the local copy. Transcription runs on the CPU
+with 8-bit computation, so an NVIDIA GPU is not required.
+
+![SpeakRAG transcript view](docs/transcript.png)
 
 The interface uses PySide6 (Qt for Python). Recording, playback, and plotting
 run in a background thread so the window remains responsive. The desktop app
@@ -36,6 +48,33 @@ For learning: `SpeakRAGWindow` builds the controls and displays results;
 `AudioJob` runs a requested operation on a `QThread`. The job sends progress,
 result, or error signals back to the window. All microphone, WAV, and librosa
 work stays in `voice_loop.py`, so the interface does not duplicate audio logic.
+`asr.py` loads faster-whisper and consumes its segment generator to produce the
+transcript. The window displays that result; it does not run the model itself.
+
+## Transcribe from the command line
+
+To try ASR before recording works, download the public sample into the ignored
+`recordings/` directory:
+
+```powershell
+Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav' -OutFile recordings\jfk-sample.wav
+.\.venv\Scripts\python.exe asr.py recordings\jfk-sample.wav --model base.en
+```
+
+You can also open `recordings\jfk-sample.wav` in the desktop interface and
+select **Transcribe WAV**. For your own audio, use:
+
+```powershell
+.\.venv\Scripts\python.exe asr.py recordings\sample.wav --model base.en
+.\.venv\Scripts\python.exe asr.py recordings\sample.wav --model base.en --json
+```
+
+The first command prints the transcript and each segment's start and end time.
+The second prints structured JSON for later evaluation or RAG integration.
+The JSON and UI distinguish model loading from transcription time; the first
+model load can include the one-time download.
+ASR may mishear speech, so review the transcript before treating it as a search
+query. Silent or non-speech audio may produce an empty or incorrect transcript.
 
 ## Run the audio loop
 
@@ -86,7 +125,7 @@ change when headsets or other audio hardware are connected.
 - [x] Local microphone capture and speaker playback with PyAudio
 - [x] WAV inspection and plots with librosa
 - [x] Desktop interface for the audio lab
-- [ ] Automatic speech recognition (ASR)
+- [x] Local automatic speech recognition (ASR) for WAV files
 - [ ] Retrieval-augmented generation (RAG)
 - [ ] Text-to-speech (TTS)
 - [ ] Vehicle application and evaluation

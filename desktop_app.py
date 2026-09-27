@@ -20,13 +20,16 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QSizePolicy,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
+from asr import transcribe_audio
 from voice_loop import analyse_audio, get_audio_devices, play_audio, record_audio, save_plot
 
 
@@ -70,6 +73,11 @@ class AudioJob(QThread):
                 )
                 self.result.emit({"task": "play"})
                 return
+            elif self.task == "transcribe":
+                self.stage.emit("Transcribing audio. The first run downloads the selected model…")
+                transcript = transcribe_audio(self.path, self.options["model"])
+                self.result.emit({"task": "transcribe", "transcript": transcript})
+                return
 
             self.stage.emit("Analysing audio and drawing the preview…")
             report = analyse_audio(self.path)
@@ -99,11 +107,12 @@ def metric_card(title: str) -> tuple[QFrame, QLabel]:
 class SpeakRAGWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("SpeakRAG · Audio Lab")
+        self.setWindowTitle("SpeakRAG · Speech Lab")
         self.resize(1240, 830)
         self.setMinimumSize(960, 680)
         self.current_audio: Path | None = None
         self.current_plot: Path | None = None
+        self.current_transcript: dict | None = None
         self._pixmap: QPixmap | None = None
         self._worker: AudioJob | None = None
         self._build_ui()
@@ -128,7 +137,7 @@ class SpeakRAGWindow(QMainWindow):
         identity.addWidget(subtitle)
         header.addLayout(identity)
         header.addStretch()
-        badge = QLabel("01  /  AUDIO LAB")
+        badge = QLabel("02  /  SPEECH LAB")
         badge.setObjectName("badge")
         header.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
         root.addLayout(header)
@@ -220,7 +229,7 @@ class SpeakRAGWindow(QMainWindow):
         toptext = QVBoxLayout()
         overline = QLabel("YOUR SIGNAL, EXPLAINED")
         overline.setObjectName("eyebrow")
-        heading = QLabel("Listen. Inspect. Learn.")
+        heading = QLabel("Listen. Inspect. Transcribe.")
         heading.setObjectName("heading")
         toptext.addWidget(overline)
         toptext.addWidget(heading)
@@ -243,6 +252,7 @@ class SpeakRAGWindow(QMainWindow):
             metric_grid.addWidget(card, index // 3, index % 3)
         content.addLayout(metric_grid)
 
+        self.tabs = QTabWidget()
         chart = QFrame()
         chart.setObjectName("panel")
         chart_layout = QVBoxLayout(chart)
@@ -256,7 +266,49 @@ class SpeakRAGWindow(QMainWindow):
         self.plot_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.plot_label.setMinimumHeight(250)
         chart_layout.addWidget(self.plot_label, stretch=1)
-        content.addWidget(chart, stretch=1)
+        self.tabs.addTab(chart, "Signal")
+
+        transcript_panel = QFrame()
+        transcript_panel.setObjectName("panel")
+        transcript_layout = QVBoxLayout(transcript_panel)
+        transcript_layout.setContentsMargins(21, 20, 21, 20)
+        transcript_layout.setSpacing(13)
+        transcript_title = QLabel("AUTOMATIC SPEECH RECOGNITION")
+        transcript_title.setObjectName("eyebrow")
+        transcript_layout.addWidget(transcript_title)
+        transcript_controls = QHBoxLayout()
+        self.asr_model = QComboBox()
+        self.asr_model.addItem("base.en · English", "base.en")
+        self.asr_model.addItem("tiny.en · faster English", "tiny.en")
+        self.asr_model.addItem("base · multilingual", "base")
+        transcript_controls.addWidget(self.asr_model, stretch=1)
+        self.transcribe_button = QPushButton("Transcribe WAV")
+        self.transcribe_button.setObjectName("primaryButton")
+        self.transcribe_button.setEnabled(False)
+        self.transcribe_button.clicked.connect(self._transcribe)
+        transcript_controls.addWidget(self.transcribe_button)
+        self.copy_button = QPushButton("Copy text")
+        self.copy_button.setEnabled(False)
+        self.copy_button.clicked.connect(self._copy_transcript)
+        transcript_controls.addWidget(self.copy_button)
+        transcript_layout.addLayout(transcript_controls)
+        self.transcript_meta = QLabel("Choose an audio file, then transcribe it.")
+        self.transcript_meta.setObjectName("muted")
+        transcript_layout.addWidget(self.transcript_meta)
+        self.transcript_text = QPlainTextEdit()
+        self.transcript_text.setReadOnly(True)
+        self.transcript_text.setPlaceholderText("Recognised speech will appear here.")
+        transcript_layout.addWidget(self.transcript_text, stretch=1)
+        segment_label = QLabel("TIMESTAMPED SEGMENTS")
+        segment_label.setObjectName("eyebrow")
+        transcript_layout.addWidget(segment_label)
+        self.segment_text = QPlainTextEdit()
+        self.segment_text.setReadOnly(True)
+        self.segment_text.setMaximumHeight(95)
+        self.segment_text.setPlaceholderText("No segments yet.")
+        transcript_layout.addWidget(self.segment_text)
+        self.tabs.addTab(transcript_panel, "Transcript")
+        content.addWidget(self.tabs, stretch=1)
 
         footer = QFrame()
         footer.setObjectName("statusPanel")
@@ -344,6 +396,18 @@ class SpeakRAGWindow(QMainWindow):
                 "play", self.current_audio, {"output_device": self.output_device.currentData()}
             )
 
+    def _transcribe(self):
+        if self.current_audio:
+            self._status("Starting local transcription…")
+            self._start_job(
+                "transcribe", self.current_audio, {"model": self.asr_model.currentData()}
+            )
+
+    def _copy_transcript(self):
+        if self.current_transcript:
+            QApplication.clipboard().setText(self.current_transcript["text"])
+            self._status("Transcript copied to the clipboard.")
+
     def _stop(self):
         if self._worker:
             self._worker.request_stop()
@@ -358,8 +422,30 @@ class SpeakRAGWindow(QMainWindow):
         if payload["task"] == "play":
             self._status("Playback finished.")
             return
+        if payload["task"] == "transcribe":
+            self.current_transcript = payload["transcript"]
+            result = self.current_transcript
+            self.transcript_text.setPlainText(result["text"] or "[No speech detected]")
+            self.segment_text.setPlainText(
+                "\n".join(
+                    f"{part['start']:.2f}–{part['end']:.2f} s   {part['text']}"
+                    for part in result["segments"]
+                )
+            )
+            self.transcript_meta.setText(
+                f"{result['model']}  ·  {result['language']}  ·  "
+                f"ASR {result['transcription_seconds']:.2f} s  ·  "
+                f"model load {result['model_load_seconds']:.2f} s"
+            )
+            self.tabs.setCurrentIndex(1)
+            self._status("Transcription ready. Review the text before using it for retrieval.")
+            return
         self.current_audio = payload["path"]
         self.current_plot = payload["plot"]
+        self.current_transcript = None
+        self.transcript_text.clear()
+        self.segment_text.clear()
+        self.transcript_meta.setText("Choose an audio file, then transcribe it.")
         self._pixmap = QPixmap(str(self.current_plot))
         self._show_plot()
         self._show_metrics(payload["report"])
@@ -384,8 +470,16 @@ class SpeakRAGWindow(QMainWindow):
         self.refresh_button.setEnabled(not busy)
         self.play_button.setEnabled(not busy and self.current_audio is not None)
         self.export_button.setEnabled(not busy and self.current_plot is not None)
-        self.stop_button.setEnabled(busy)
-        for widget in (self.input_device, self.output_device, self.rate, self.channels, self.seconds):
+        self.transcribe_button.setEnabled(not busy and self.current_audio is not None)
+        self.copy_button.setEnabled(
+            not busy and self.current_transcript is not None and bool(self.current_transcript["text"])
+        )
+        self.stop_button.setEnabled(
+            busy and self._worker is not None and self._worker.task in ("record", "play")
+        )
+        for widget in (
+            self.input_device, self.output_device, self.rate, self.channels, self.seconds, self.asr_model
+        ):
             widget.setEnabled(not busy)
 
     def _show_metrics(self, report: dict):
@@ -451,6 +545,13 @@ QLabel#badge { color: #7ce5b5; background: #17372c; border: 1px solid #2b7553;
 QFrame#panel { background: #121d24; border: 1px solid #273b43; border-radius: 16px; }
 QFrame#metricCard { background: #17252c; border: 1px solid #294047; border-radius: 12px; }
 QFrame#statusPanel { background: #10202a; border: 1px solid #274351; border-radius: 12px; }
+QTabWidget::pane { border: 0; background: transparent; }
+QTabBar::tab { background: #17262e; color: #93aaa3; border: 1px solid #294047;
+               border-bottom: 0; padding: 9px 19px; margin-right: 4px;
+               border-top-left-radius: 8px; border-top-right-radius: 8px; }
+QTabBar::tab:selected { background: #234738; color: #abf4d0; }
+QPlainTextEdit { background: #0e191f; color: #e9f0ee; border: 1px solid #355058;
+                 border-radius: 9px; padding: 12px; font-family: 'Consolas'; font-size: 14px; }
 QLabel#eyebrow, QLabel#fieldLabel, QLabel#metricCaption, QLabel#fileLabel {
     color: #75c8a3; font-size: 10px; font-weight: 800; letter-spacing: 1px;
 }
