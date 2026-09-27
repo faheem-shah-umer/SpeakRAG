@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 )
 
 from asr import transcribe_audio
+from tts import DEFAULT_OUTPUT, list_voices, synthesize_speech
 from voice_loop import analyse_audio, get_audio_devices, play_audio, record_audio, save_plot
 
 
@@ -102,6 +103,26 @@ class AudioJob(QThread):
                 transcript = transcribe_audio(self.path, self.options["model"])
                 self.result.emit({"task": "transcribe", "transcript": transcript})
                 return
+            elif self.task == "speak":
+                self.stage.emit("Creating speech from the answer. The first use of a voice downloads its model…")
+                try:
+                    synthesize_speech(
+                        self.options["answer"], self.path, self.options["voice"],
+                        self.options["rate"], stop_requested=self.stop_event.is_set,
+                    )
+                except InterruptedError:
+                    self.result.emit({"task": "speak", "stopped": True})
+                    return
+                if self.stop_event.is_set():
+                    self.result.emit({"task": "speak", "stopped": True})
+                    return
+                self.stage.emit("Playing the spoken answer…")
+                play_audio(
+                    self.path, self.options["output_device"],
+                    stop_requested=self.stop_event.is_set,
+                )
+                self.result.emit({"task": "speak", "stopped": self.stop_event.is_set()})
+                return
 
             self.stage.emit("Analysing audio and drawing the preview…")
             report = analyse_audio(self.path)
@@ -138,10 +159,12 @@ class SpeakRAGWindow(QMainWindow):
         self.current_audio: Path | None = None
         self.current_plot: Path | None = None
         self.current_transcript: dict | None = None
+        self.current_answer: str | None = None
         self._pixmap: QPixmap | None = None
         self._worker: AudioJob | None = None
         self._build_ui()
         self._refresh_devices()
+        self._refresh_voices()
 
     def _build_ui(self):
         shell = QWidget()
@@ -388,6 +411,24 @@ class SpeakRAGWindow(QMainWindow):
         self.handbook_answer.setPlaceholderText("The grounded answer will appear here.")
         self.handbook_answer.setMaximumHeight(130)
         handbook_layout.addWidget(self.handbook_answer)
+        speech_controls = QHBoxLayout()
+        self.tts_voice = QComboBox()
+        speech_controls.addWidget(self.tts_voice, stretch=1)
+        self.tts_rate = QComboBox()
+        self.tts_rate.addItem("Slow", 1.2)
+        self.tts_rate.addItem("Normal speed", 1.0)
+        self.tts_rate.addItem("Fast", 0.85)
+        self.tts_rate.setCurrentIndex(1)
+        speech_controls.addWidget(self.tts_rate)
+        handbook_layout.addLayout(speech_controls)
+        speech_playback = QHBoxLayout()
+        self.tts_output_device = QComboBox()
+        speech_playback.addWidget(self.tts_output_device, stretch=1)
+        self.speak_answer_button = QPushButton("▶  Speak answer")
+        self.speak_answer_button.setEnabled(False)
+        self.speak_answer_button.clicked.connect(self._speak_answer)
+        speech_playback.addWidget(self.speak_answer_button)
+        handbook_layout.addLayout(speech_playback)
         sources_label = QLabel("RETRIEVED PASSAGES  /  PDF PAGE REFERENCES")
         sources_label.setObjectName("eyebrow")
         handbook_layout.addWidget(sources_label)
@@ -431,8 +472,10 @@ class SpeakRAGWindow(QMainWindow):
     def _refresh_devices(self):
         self.input_device.clear()
         self.output_device.clear()
+        self.tts_output_device.clear()
         self.input_device.addItem("System default", None)
         self.output_device.addItem("System default", None)
+        self.tts_output_device.addItem("System default speaker", None)
         try:
             for device in get_audio_devices():
                 label = f"[{device['index']}] {device['name']}"
@@ -440,9 +483,15 @@ class SpeakRAGWindow(QMainWindow):
                     self.input_device.addItem(label, device["index"])
                 if device["maxOutputChannels"]:
                     self.output_device.addItem(label, device["index"])
+                    self.tts_output_device.addItem(label, device["index"])
             self._status("Audio devices refreshed.")
         except Exception as exc:
             self._status(f"Could not list audio devices: {exc}", error=True)
+
+    def _refresh_voices(self):
+        self.tts_voice.clear()
+        for voice in list_voices():
+            self.tts_voice.addItem(f"{voice['name']} · {voice['language']}", voice["model"])
 
     def _start_job(self, task: str, path: Path, options: dict | None = None):
         if self._worker is not None:
@@ -536,7 +585,18 @@ class SpeakRAGWindow(QMainWindow):
         if not question:
             self._status("Type a handbook question first.")
             return
+        self.current_answer = None
+        self.speak_answer_button.setEnabled(False)
         self._start_job(task, ROOT, {"question": question})
+
+    def _speak_answer(self):
+        if self.current_answer:
+            self._start_job("speak", DEFAULT_OUTPUT, {
+                "answer": self.current_answer,
+                "voice": self.tts_voice.currentData(),
+                "rate": self.tts_rate.currentData(),
+                "output_device": self.tts_output_device.currentData(),
+            })
 
     def _stop(self):
         if self._worker:
@@ -546,7 +606,8 @@ class SpeakRAGWindow(QMainWindow):
     def _busy_stage(self, message: str):
         self._status(message)
         self.progress.setRange(0, 0)
-        self.stop_button.setEnabled(False)
+        if self._worker and self._worker.task != "speak":
+            self.stop_button.setEnabled(False)
 
     def _job_result(self, payload: dict):
         if payload["task"] == "index":
@@ -557,6 +618,7 @@ class SpeakRAGWindow(QMainWindow):
             )
             return
         if payload["task"] in ("search", "ask"):
+            self.current_answer = payload["answer"] if payload["task"] == "ask" else None
             self.handbook_answer.setPlainText(payload["answer"] or "Search results are shown below.")
             self.handbook_sources.setPlainText("\n\n".join(
                 f"[{number}] {hit['title']} · PDF page {hit['pdf_page']} "
@@ -567,6 +629,12 @@ class SpeakRAGWindow(QMainWindow):
             self._status(
                 "Answer ready with source pages." if payload["task"] == "ask"
                 else "Relevant handbook passages are ready."
+            )
+            return
+        if payload["task"] == "speak":
+            self._status(
+                "Speech stopped." if payload["stopped"]
+                else f"Spoken answer finished. WAV saved to {DEFAULT_OUTPUT}"
             )
             return
         if payload["task"] == "play":
@@ -628,12 +696,14 @@ class SpeakRAGWindow(QMainWindow):
         self.use_transcript_button.setEnabled(not busy)
         self.search_handbook_button.setEnabled(not busy and HANDBOOK_INDEX.exists())
         self.ask_handbook_button.setEnabled(not busy and HANDBOOK_INDEX.exists())
+        self.speak_answer_button.setEnabled(not busy and bool(self.current_answer))
         self.stop_button.setEnabled(
-            busy and self._worker is not None and self._worker.task in ("record", "play")
+            busy and self._worker is not None and self._worker.task in ("record", "play", "speak")
         )
         for widget in (
             self.input_device, self.output_device, self.rate, self.channels, self.seconds,
-            self.asr_model, self.handbook_query,
+            self.asr_model, self.handbook_query, self.tts_voice, self.tts_rate,
+            self.tts_output_device,
         ):
             widget.setEnabled(not busy)
 

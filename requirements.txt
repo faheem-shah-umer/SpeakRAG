@@ -8,3 +8,4 @@ PyMuPDF>=1.24,<2
 qdrant-client[fastembed]>=1.14,<2
 python-dotenv>=1,<2
 requests>=2.31,<3
+piper-tts>=1.8,<2

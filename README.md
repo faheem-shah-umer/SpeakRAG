@@ -1,9 +1,9 @@
 # SpeakRAG
 
-SpeakRAG is a reusable ASR–RAG–TTS assistant project. It currently records,
-inspects, plays, and transcribes WAV audio. Retrieval and speech synthesis will
-be added in later milestones. The first application will be a simulated vehicle
-assistant.
+SpeakRAG is a reusable ASR–RAG–TTS assistant project. It records, inspects,
+plays, and transcribes WAV audio; retrieves handbook passages; generates a
+grounded answer; and speaks that answer. The first application is a simulated
+vehicle assistant.
 
 ![SpeakRAG Speech Lab signal view](docs/audio-lab.png)
 
@@ -72,7 +72,7 @@ the PDF, downloads a small local embedding model, and builds the Qdrant index.
 Then type a question or select **Use transcript** after ASR. **Search pages**
 shows the retrieved text with PDF page numbers. **Generate answer** calls
 OpenRouter's `qwen/qwen3.8-27b:free` model if configured; its answer should cite the
-retrieved passages as `[1]`, `[2]`, and so on.
+retrieved passages as `[1]`, `[2]`, and so on. Select **Speak answer** to hear it.
 
 The same stages are available from PowerShell:
 
@@ -126,6 +126,44 @@ The PDF, model weights, local Qdrant database, and `.env` are Git-ignored. The
 public repository includes the source link and the code, but not Hyundai's
 manual or copied text. PDF extraction can garble some styled headings, so
 inspect the cited page when an answer matters.
+
+## Speak the answer with Piper
+
+The **Handbook** tab has a voice, speed, and speaker selector. After **Generate
+answer**, select **Speak answer**. Piper turns the displayed answer into a local
+WAV file at `recordings/answer.wav`; PyAudio plays that file through the chosen
+speaker. **Stop** ends synthesis after its current chunk or stops playback.
+The visible answer keeps its `[1]` citations, while `tts.py` removes citation
+numbers from the spoken text. **Search pages** does not enable speech because it
+only retrieves passages and does not generate an answer.
+
+The first use of a voice downloads its ONNX model into the Git-ignored
+`models/piper/` folder (about 63 MB for each of the included voices). The default
+is the British English Alba voice. Later synthesis runs locally on the CPU and
+does not send the answer to a TTS service. Piper uses ONNX Runtime for inference;
+this is a small example of local model deployment, though it is not yet an
+automotive edge deployment.
+
+Try TTS without calling OpenRouter:
+
+```powershell
+.\.venv\Scripts\python.exe tts.py --list-voices
+.\.venv\Scripts\python.exe tts.py "The charging instructions are on page 62 [1]." --play
+.\.venv\Scripts\python.exe voice_loop.py analyse recordings\answer.wav
+```
+
+The first command lists the supported voices. The second synthesizes and plays
+a short sample, and the third inspects the resulting WAV. Use
+`--voice en_US-lessac-medium` to try the US English voice and `--rate 0.85` for
+faster speech. A value above 1 makes speech slower. The [Piper Python
+API](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/API_PYTHON.md)
+provides `PiperVoice.load()` and `synthesize()`; `tts.py` writes its audio
+chunks as PCM WAV and checks for **Stop** between chunks. `desktop_app.py` runs
+this function in `AudioJob` so the window stays responsive, then hands the WAV
+to the same `play_audio()` function used for microphone recordings. The voice
+models come from [Piper Voices](https://huggingface.co/rhasspy/piper-voices).
+Piper itself is GPL-3.0-or-later licensed; review that licence before distributing a
+packaged copy of the application.
 
 ## Transcribe from the command line
 
@@ -204,5 +242,5 @@ change when headsets or other audio hardware are connected.
 - [x] Local automatic speech recognition (ASR) for WAV files
 - [x] PDF indexing and local Qdrant retrieval with page references
 - [x] Grounded RAG generation using the configured OpenRouter model
-- [ ] Text-to-speech (TTS)
+- [x] Local text-to-speech (TTS) with Piper and PyAudio playback
 - [ ] Vehicle application and evaluation
