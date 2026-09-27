@@ -6,6 +6,7 @@ __pycache__/
 .ruff_cache/
 .mplconfig/
 models/
+/*.lnk
 
 # Local configuration and credentials for later milestones
 .env

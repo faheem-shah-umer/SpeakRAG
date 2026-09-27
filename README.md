@@ -21,6 +21,14 @@ py -3.11 -m venv .venv
 
 ## Use the desktop interface
 
+After setup, double-click **Launch SpeakRAG.cmd** in the project folder. On
+Windows, run `powershell -ExecutionPolicy Bypass -File .\make_shortcut.ps1` once
+to create **SpeakRAG.lnk** in the same folder, with the project logo. The
+shortcut points to this folder's virtual environment; run the script again if
+you move the project or recreate `.venv`. The `.lnk` is local and Git-ignored.
+
+The equivalent command is:
+
 ```powershell
 .\.venv\Scripts\python.exe desktop_app.py
 ```

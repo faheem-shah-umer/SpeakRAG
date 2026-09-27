@@ -9,7 +9,7 @@ from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QThread, Qt, Signal
-from PySide6.QtGui import QPixmap
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -35,6 +35,7 @@ from voice_loop import analyse_audio, get_audio_devices, play_audio, record_audi
 
 ROOT = Path(__file__).resolve().parent
 PREVIEW = ROOT / "plots" / "current.png"
+APP_ICON = ROOT / "docs" / "SpeakRAG.png"
 
 
 class AudioJob(QThread):
@@ -108,6 +109,7 @@ class SpeakRAGWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("SpeakRAG · Speech Lab")
+        self.setWindowIcon(QIcon(str(APP_ICON)))
         self.resize(1240, 830)
         self.setMinimumSize(960, 680)
         self.current_audio: Path | None = None
@@ -127,6 +129,18 @@ class SpeakRAGWindow(QMainWindow):
         root.setSpacing(23)
 
         header = QHBoxLayout()
+        logo = QLabel()
+        logo.setObjectName("logo")
+        logo.setFixedSize(58, 58)
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setPixmap(
+            QPixmap(str(APP_ICON)).scaled(
+                46, 46, Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+        header.addWidget(logo)
+        header.addSpacing(12)
         identity = QVBoxLayout()
         identity.setSpacing(2)
         brand = QLabel("SpeakRAG")
@@ -539,6 +553,7 @@ class SpeakRAGWindow(QMainWindow):
 STYLE = """
 QWidget#shell { background: #0b1117; color: #e9f0ee; font-family: 'Segoe UI'; font-size: 13px; }
 QLabel#brand { font-size: 27px; font-weight: 800; color: #f3f8f6; }
+QLabel#logo { background: transparent; }
 QLabel#muted { color: #8fa39f; font-size: 12px; }
 QLabel#badge { color: #7ce5b5; background: #17372c; border: 1px solid #2b7553;
                border-radius: 11px; padding: 9px 15px; font-size: 11px; font-weight: 700; }
@@ -581,6 +596,8 @@ QProgressBar::chunk { background: #7ce5b5; border-radius: 4px; }
 
 def main():
     app = QApplication(sys.argv)
+    app.setApplicationName("SpeakRAG")
+    app.setWindowIcon(QIcon(str(APP_ICON)))
     window = SpeakRAGWindow()
     window.show()
     return app.exec()
