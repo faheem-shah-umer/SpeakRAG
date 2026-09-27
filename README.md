@@ -1,29 +1,61 @@
+<div align="center">
+
+<img src="docs/logo.png" alt="SpeakRAG waveform logo" width="132">
+
 # SpeakRAG
 
-A desktop ASR–RAG–TTS assistant for learning how voice, retrieval, answer
-generation, and speech synthesis work together. The included application uses
-an automotive owner’s manual, but the pipeline can index another text-based PDF.
+### Ask your documents with your voice.
+
+A desktop learning project that connects speech recognition, cited retrieval,
+LLM answers, and speech synthesis in one inspectable workflow.
+
+[Explore the workflow](#the-workflow) · [Get started](#quick-start-on-windows) · [Read the architecture](docs/ARCHITECTURE.md)
+
+</div>
+
+SpeakRAG uses an automotive owner’s manual as its example, but you can index
+another text-based PDF. Audio recognition, retrieval, and speech synthesis run
+locally; answer generation sends the question and retrieved passages to
+OpenRouter.
 
 ![SpeakRAG Voice Studio](docs/studio.png)
 
 *The interface preview uses a synthetic audio signal. No personal recording or
 handbook text is included in the screenshot.*
 
-## What it does
+## The workflow
 
 | Step | In the app | Main technology |
 | --- | --- | --- |
 | 1. Capture | Record or open a WAV; inspect waveform, spectrogram, levels, clipping, and silence | PyAudio, librosa |
 | 2. Transcribe | Convert the WAV to text and review timestamped segments | faster-whisper, local CPU |
-| 3. Ask & listen | Retrieve cited manual passages, generate an answer, and speak it | Qdrant, FastEmbed, OpenRouter, Piper |
+| 3. Ask & listen | Retrieve cited manual passages, generate an answer, and speak it | Qdrant, FastEmbed, OpenRouter, Piper ONNX |
 
-The user starts each step explicitly. The transcript can be copied into the
-handbook question with **Use transcript as question**. Search and synthesis can
-also be used independently from the command line.
+The user starts each step explicitly. You can review the transcript before
+selecting **Use transcript as question**. Retrieval and speech synthesis also
+work independently from the command line.
+
+```mermaid
+flowchart LR
+    A[Microphone / WAV] --> B[PyAudio + librosa]
+    B --> C[faster-whisper ASR]
+    C --> D[Reviewed question]
+    D --> E[FastEmbed + local Qdrant]
+    F[Your PDF] --> E
+    E --> G[Cited passages]
+    G --> H[OpenRouter answer]
+    H --> I[Piper ONNX + PyAudio]
+```
+
+The [architecture notes](docs/ARCHITECTURE.md) explain each module, where data
+is stored, and which step makes a network request.
 
 ## Quick start on Windows
 
-Use Python 3.11 and install the dependencies in a virtual environment:
+You need **Windows, Python 3.11, an audio output device, and an internet
+connection for the initial model downloads**. A microphone is optional if you
+start with an existing WAV file. Install the dependencies in a virtual
+environment:
 
 ```powershell
 py -3.11 -m venv .venv
@@ -122,14 +154,17 @@ The last command runs TTS without calling OpenRouter. `tts.py --list-voices`
 shows the available voice choices. The CLI also accepts `--voice` and `--rate`;
 `0.85` is faster, while values above `1` are slower.
 
-For a module-by-module explanation and data-flow diagram, see
-[Architecture and learning notes](docs/ARCHITECTURE.md).
-
-## Repository hygiene and tests
+## Privacy and local data
 
 `.gitignore` excludes `.env`, the handbook PDF, Qdrant data, downloaded models,
 recordings, plots, caches, and the local shortcut. The committed screenshots use
-synthetic or empty UI states. Review `git status` before every public push.
+synthetic or empty UI states. **Generate answer** sends your question and
+retrieved passages to OpenRouter; capture, ASR, search, and TTS run locally after
+their models are downloaded. Review `git status` before every public push.
+
+## Development and scope
+
+Run the project’s checks with:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -140,6 +175,3 @@ The app is a local learning prototype. It has no FastAPI/Kafka service, automate
 evaluation suite, vehicle integration, or automotive safety validation. Piper is
 distributed under GPL-3.0-or-later; review its licence before packaging and
 redistributing the application.
-
-The repository has no Git remote configured. After creating your own GitHub
-repository, add its URL as `origin` and push the `main` branch.
